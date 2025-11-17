@@ -40,22 +40,22 @@ Age: 0 to 7, in bins of 10 years
 There are no direct timestamps, again for privacy reasons, but each entry in the table is in sequential order, so we can still get relative temporal data. For example, a single users will have a session of on average around 50 videos, where all have metrics for click, like, follow, share.
 ## Data Insights
 Looking at clicks per video and charting it we can see a typical long-tail distribution.
-![image](https://hackmd.io/_uploads/SkyYjg7eWe.png)
-![image](https://hackmd.io/_uploads/Hy-7nlmxbe.png)
+![alt text](image.png)
+![alt text](image-1.png)
 
 There are also some missing values, with many users having an unknown gender and age. Many entries in video_category have a null value as well, which I am interpreting as a category of "other".
 
 A huge percentage of viewers have an unknwon age and gender. For users that we know their age, it's much more likely we know the gender. Gender does not have an even split, and there are more users of gender 1 than 2. I'm not sure yet which is male or female, but it doesn't really matter.
-![image](https://hackmd.io/_uploads/HyD-2lmebe.png)
+![alt text](image-2.png)
 
 Users view videos in a single "session", where they see videos one-by-one. This could lead to some interesting solutions with RNNs which I am excited to explore. The average session length is 71 videos, with 65% of users having a session length of between 0 and 50 videos.
 
-![image](https://hackmd.io/_uploads/H1x0f0gmgWg.png)
+![alt text](image-3.png)
 
 
 There are some seemingly impossible values, such as videos that were not clicked on, but liked. Or videos that were shared, but now clicked on. Besides those, the ratio of clicked to not clicked for videos is fairly balanced.
 
-![image](https://hackmd.io/_uploads/HJ1y6l7g-g.png)
+![alt text](image-4.png)
 
 ## What issues remain?
 Handling the large amount of data still remains a challenge. I'm working with the QB-Video dataset which has about 30k users, but I want to eventually use the QK-Video dataset, with 5 million. Designing pipelines and code that is performant, and picking the right libraries to use will be important to consider.
