@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 from datasets import sbrDataset
 from rnn import SBRNN
 
-
+##THIS IS WRONG: GET UNIQUE NUMBER OF VIDEO IDS INSTEAD OR NORMALIZE!!!
 def get_vocab_size(path: str, target_col: str) -> int:
     """Return vocab size including padding index."""
     max_id = (
