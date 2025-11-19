@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import polars as pl
 import torch
 import torch.nn as nn
@@ -50,12 +52,12 @@ def run_epoch(loader, model, criterion, optimizer, device, train: bool):
 
 def main():
     data_path = "./data/QB-video.csv"
-    feature_cols = ["click", "follow", "like"]
+    feature_cols = ["click", "follow", "like", "share"]
     target_col = "item_id"
     batch_size = 64
-    num_workers = 0
+    num_workers = 4
     min_len, max_len = 10, 30
-    emb_dim, hidden_dim = 128, 128
+    emb_dim, hidden_dim = 256, 512
     dropout = 0.4
     lr = 1e-3
     epochs = 3
@@ -84,14 +86,14 @@ def main():
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
-        pin_memory=False,
+        pin_memory=True,
     )
     val_loader = DataLoader(
         val_set,
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        pin_memory=False,
+        pin_memory=True,
     )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -104,7 +106,7 @@ def main():
     ).to(device)
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
 
     for epoch in range(1, epochs + 1):
         train_loss, train_acc = run_epoch(
@@ -120,6 +122,29 @@ def main():
             f"val loss {val_loss:.4f}, val acc {val_acc*100:.2f}%"
         )
 
+    checkpoint_dir = Path("checkpoints")
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_path = checkpoint_dir / "gru_last.pt"
+    config = {
+        "data_path": data_path,
+        "feature_cols": feature_cols,
+        "target_col": target_col,
+        "min_len": min_len,
+        "max_len": max_len,
+        "emb_dim": emb_dim,
+        "hidden_dim": hidden_dim,
+        "dropout": dropout,
+        "vocab_size": vocab_size,
+        "feature_dim": feature_dim,
+    }
+    torch.save(
+        {
+            "model_state": model.state_dict(),
+            "config": config,
+        },
+        checkpoint_path,
+    )
+    print(f"Saved checkpoint to {checkpoint_path}")
 
 if __name__ == "__main__":
     main()

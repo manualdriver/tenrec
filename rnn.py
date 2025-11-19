@@ -7,7 +7,7 @@ class SBRNN(nn.Module):
         self.feature_dim = feature_dim
         self.emb = nn.Embedding(n_videos, emb_size, padding_idx=0)
         rnn_input_dim = emb_size + feature_dim
-        self.rnn = nn.GRU(
+        self.rnn = nn.LSTM(
             rnn_input_dim,
             hidden_size,
             num_layers=2,
