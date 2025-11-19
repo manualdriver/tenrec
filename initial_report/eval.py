@@ -6,6 +6,7 @@ from sklearn.metrics import ndcg_score
 from torch.utils.data import DataLoader
 
 from datasets import sbrDataset
+from popular_baseline import PopularBaseline
 from random_baseline import RandomBaseline
 from rnn import SBRNN
 from train_gru import get_vocab_size
@@ -76,6 +77,29 @@ def evaluate_random(
     return hr, ndcg
 
 
+def evaluate_popular(
+    loader: DataLoader, data_path: str, target_col: str, device: torch.device, k: int
+) -> tuple[float, float]:
+    model = PopularBaseline.from_csv(data_path, target_col)
+    total_examples = 0
+    total_hits = 0
+    cumulative_ndcg = 0.0
+
+    for _, _, targets in loader:
+        batch_size = targets.size(0)
+        targets = targets.to(device)
+        preds = model.predict_topk(batch_size, k, device=device)
+
+        hits, ndcg_val, count = compute_batch_metrics(preds, targets, k)
+        total_hits += hits
+        cumulative_ndcg += ndcg_val
+        total_examples += count
+
+    hr = total_hits / total_examples if total_examples else 0.0
+    ndcg = cumulative_ndcg / total_examples if total_examples else 0.0
+    return hr, ndcg
+
+
 def evaluate_gru(
     loader: DataLoader, checkpoint_path: str, device: torch.device, k: int
 ) -> tuple[float, float]:
@@ -118,7 +142,7 @@ def evaluate_gru(
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate Tenrec recommenders.")
-    parser.add_argument("--model", choices=("random", "gru"), default="random")
+    parser.add_argument("--model", choices=("random", "popular", "gru"), default="random")
     parser.add_argument("--data-path", default="./data/QB-video.csv")
     parser.add_argument("--feature-cols", default="click,follow,like,share")
     parser.add_argument("--target-col", default="item_id")
@@ -156,6 +180,8 @@ def main():
     if args.model == "random":
         vocab_size = get_vocab_size(args.data_path, args.target_col)
         hr, ndcg = evaluate_random(loader, vocab_size, device, args.k)
+    elif args.model == "popular":
+        hr, ndcg = evaluate_popular(loader, args.data_path, args.target_col, device, args.k)
     elif args.model == "gru":
         hr, ndcg = evaluate_gru(loader, args.checkpoint, device, args.k)
     else:
