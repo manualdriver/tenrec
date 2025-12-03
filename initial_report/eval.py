@@ -6,9 +6,11 @@ from sklearn.metrics import ndcg_score
 from torch.utils.data import DataLoader
 
 from datasets import sbrDataset
+from gru4rec import GRU4Rec
 from popular_baseline import PopularBaseline
 from random_baseline import RandomBaseline
 from rnn import SBRNN
+from session_knn import SessionKNN
 from train_gru import get_vocab_size
 
 
@@ -140,9 +142,72 @@ def evaluate_gru(
     return hr, ndcg
 
 
+def evaluate_gru4rec(
+    loader: DataLoader, checkpoint_path: str, device: torch.device, k: int
+) -> tuple[float, float]:
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    config = checkpoint["config"]
+    model = GRU4Rec(
+        n_items=config["vocab_size"],
+        feature_dim=config["feature_dim"],
+        emb_size=config["emb_dim"],
+        hidden_size=config["hidden_dim"],
+        num_layers=config.get("num_layers", 2),
+        dropout=config["dropout"],
+    ).to(device)
+    model.load_state_dict(checkpoint["model_state"])
+    model.eval()
+
+    total_examples = 0
+    total_hits = 0
+    cumulative_ndcg = 0.0
+
+    with torch.no_grad():
+        for item_hist, feat_hist, targets in loader:
+            item_hist = item_hist.to(device)
+            feat_hist = feat_hist.to(device)
+            targets = targets.to(device)
+            logits = model(item_hist, feat_hist)
+            pred_k = min(k, logits.size(1))
+            topk_scores, topk_indices = torch.topk(logits, k=pred_k, dim=1)
+
+            hits, ndcg_val, count = compute_batch_metrics(
+                topk_indices, targets, k, scores=topk_scores
+            )
+            total_hits += hits
+            cumulative_ndcg += ndcg_val
+            total_examples += count
+
+    hr = total_hits / total_examples if total_examples else 0.0
+    ndcg = cumulative_ndcg / total_examples if total_examples else 0.0
+    return hr, ndcg
+
+
+def evaluate_knn(loader: DataLoader, model: SessionKNN, k: int) -> tuple[float, float]:
+    total_examples = 0
+    total_hits = 0
+    cumulative_ndcg = 0.0
+
+    for item_hist, _, targets in loader:
+        # Compute predictions per example; SessionKNN works on CPU.
+        preds = torch.stack(
+            [model.predict_topk(hist.cpu(), topk=k) for hist in item_hist], dim=0
+        )
+        hits, ndcg_val, count = compute_batch_metrics(preds, targets, k)
+        total_hits += hits
+        cumulative_ndcg += ndcg_val
+        total_examples += count
+
+    hr = total_hits / total_examples if total_examples else 0.0
+    ndcg = cumulative_ndcg / total_examples if total_examples else 0.0
+    return hr, ndcg
+
+
 def main():
     parser = argparse.ArgumentParser(description="Evaluate Tenrec recommenders.")
-    parser.add_argument("--model", choices=("random", "popular", "gru"), default="random")
+    parser.add_argument(
+        "--model", choices=("random", "popular", "gru", "gru4rec", "knn"), default="random"
+    )
     parser.add_argument("--data-path", default="./data/QB-video.csv")
     parser.add_argument("--feature-cols", default="click,follow,like,share")
     parser.add_argument("--target-col", default="item_id")
@@ -154,8 +219,42 @@ def main():
     parser.add_argument("--k", type=int, default=20, help="Top-K cutoff for metrics.")
     parser.add_argument(
         "--checkpoint",
+        default=None,
+        help="Deprecated alias for --gru-checkpoint (kept for backward compatibility).",
+    )
+    parser.add_argument(
+        "--gru-checkpoint",
         default="./checkpoints/gru_last.pt",
         help="Checkpoint path for GRU evaluations.",
+    )
+    parser.add_argument(
+        "--gru4rec-checkpoint",
+        default="./checkpoints/gru4rec_qb.pt",
+        help="Checkpoint path for GRU4Rec evaluations.",
+    )
+    parser.add_argument(
+        "--knn-neighbors",
+        type=int,
+        default=50,
+        help="Number of nearest sessions to vote for k-NN recommender.",
+    )
+    parser.add_argument(
+        "--knn-min-common",
+        type=int,
+        default=1,
+        help="Minimum overlapping items to consider a neighbor in k-NN recommender.",
+    )
+    parser.add_argument(
+        "--knn-index-batch-size",
+        type=int,
+        default=512,
+        help="Batch size when building the k-NN index from the train split.",
+    )
+    parser.add_argument(
+        "--knn-index-workers",
+        type=int,
+        default=0,
+        help="Number of workers when building the k-NN index from the train split.",
     )
     args = parser.parse_args()
 
@@ -177,13 +276,36 @@ def main():
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    gru_checkpoint = args.gru_checkpoint
+    if args.checkpoint:
+        gru_checkpoint = args.checkpoint
+
     if args.model == "random":
         vocab_size = get_vocab_size(args.data_path, args.target_col)
         hr, ndcg = evaluate_random(loader, vocab_size, device, args.k)
     elif args.model == "popular":
         hr, ndcg = evaluate_popular(loader, args.data_path, args.target_col, device, args.k)
     elif args.model == "gru":
-        hr, ndcg = evaluate_gru(loader, args.checkpoint, device, args.k)
+        hr, ndcg = evaluate_gru(loader, gru_checkpoint, device, args.k)
+    elif args.model == "gru4rec":
+        hr, ndcg = evaluate_gru4rec(loader, args.gru4rec_checkpoint, device, args.k)
+    elif args.model == "knn":
+        train_dataset = sbrDataset(
+            path=args.data_path,
+            feature_cols=feature_cols,
+            target_col=args.target_col,
+            min_len=args.min_len,
+            max_len=args.max_len,
+            split="train",
+        )
+        knn_model = SessionKNN(
+            train_dataset,
+            neighbors=args.knn_neighbors,
+            min_common=args.knn_min_common,
+            loader_batch_size=args.knn_index_batch_size,
+            num_workers=args.knn_index_workers,
+        )
+        hr, ndcg = evaluate_knn(loader, knn_model, args.k)
     else:
         raise ValueError(f"Unsupported model '{args.model}'")
 
